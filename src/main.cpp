@@ -161,7 +161,7 @@ void queryData() {
     }
 
   } else {
-    tft.setTextColor(ILI9341_RED);
+    tft.setTextColor(TFT_RED);
     tft.drawString(String("Login Error"),10, yPos);
   }
 }

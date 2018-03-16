@@ -31,6 +31,7 @@ const char HTTP_CONFIG_HOME[] PROGMEM  = "<form action=\"/\"method=\"get\"><butt
 
 const char deDayShortNames_P[] PROGMEM = "FeSoMoDiMiDoFrSa";
 #define dedt_SHORT_STR_LEN  2
+int UPDATE_INTERVAL_SECS = 1800; // Update Intervall
 
 // fingerprint of the tls certificate from b2vapi.bmwgroup.com
 const char* fingerprint = "CE E1 D1 E9 D1 B6 69 E4 B9 DC 82 E0 AC 90 29 2D F6 E8 B9 BF";
@@ -39,9 +40,9 @@ const char* fingerprint = "CE E1 D1 E9 D1 B6 69 E4 B9 DC 82 E0 AC 90 29 2D F6 E8
 
 class CarStatus {
 public:
-  CarStatus(void) : lvl(0), kmleft(0),charging(false) {}
-  CarStatus(int lvl, int kmleft,bool charging) : lvl(lvl), kmleft(kmleft), charging(charging) {}
-  int lvl;int kmleft;bool charging;
+  CarStatus(void) : vin(""), name(""), lvl(0), kmleft(0),charging(false),chargingTimeRemaining(0) {}
+  CarStatus(String vin,String name, int lvl, int kmleft,bool charging, int chargingTimeRemaining) : vin(vin),name(name) , lvl(lvl), kmleft(kmleft), charging(charging), chargingTimeRemaining(chargingTimeRemaining) {}
+  String vin;String name ; int lvl;int kmleft;bool charging;int chargingTimeRemaining;
 };
 
 class Credentials {
@@ -78,6 +79,7 @@ long lastPressButton1 = 0;
 boolean shouldDrawClockFace = false;
 CarStatus cd;
 CarData car;
+CarStatus currentStatus;
 
 float sx = 0, sy = 1, mx = 1, my = 0, hx = -1, hy = 0;    // Saved H, M, S x & y multipliers
 float sdeg=0, mdeg=0, hdeg=0;
@@ -105,7 +107,7 @@ char* deDayShortStr(uint8_t day)
 void configModeCallback (WiFiManager *myWiFiManager);
 String loginCDgetToken();
 String getCarData(String token, String vin);
-CarStatus parseCarData(String json);
+CarStatus parseCarData(CarData car, String json);
 CarData getFirstCar(String json);
 void queryData();
 Credentials loadCredentials(String cfgFile);
@@ -289,11 +291,13 @@ void queryData() {
   if (token != "") {
     tft.drawString(String("seems legit, query car data"),110, yPos);
     yPos = yPos + 20;
+
     String strcars = getCarData(token,"");
-    car = getFirstCar(strcars);
+    CarData car = getFirstCar(strcars);
+
     if (car.vin != "") {
       String result = getCarData(token,car.vin);
-      cd = parseCarData(result);
+      currentStatus = parseCarData(car,result);
       showData();
     }
 
@@ -312,29 +316,37 @@ void showData() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
   yPos = 20;
-  tft.drawString(String(car.name),120, yPos);
+  tft.drawString(String(currentStatus.name),120, yPos);
   yPos = yPos + 30;
 
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
-  if (cd.lvl > 20) {
+  if (currentStatus.lvl > 20) {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
   }
 
-  if (cd.lvl < 5) {
+  if (currentStatus.lvl < 5) {
     tft.setTextColor(TFT_RED, TFT_BLACK);
   }
 
-  tft.drawString(String(cd.lvl) + " %",160, yPos,8);
+  if (currentStatus.charging) {
+    tft.setTextColor(TFT_BLUE, TFT_BLACK);
+    UPDATE_INTERVAL_SECS = random(300,600);
+  } else {
+    UPDATE_INTERVAL_SECS = 1800 + random(100,400);
+  }
+
+  tft.drawString(String(currentStatus.lvl) + " %",140, yPos,8);
   yPos = yPos + 100;
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(String("remaining km: ") + String(cd.kmleft), 120, yPos);
+  tft.drawString(String("remaining km: ") + String(currentStatus.kmleft), 120, yPos);
   yPos = yPos + 20;
 
-  if (cd.charging) {
-    tft.drawString(String("Car is charging ..."), 160, yPos);
+  if (currentStatus.charging) {
+    tft.drawString(String("Car is charging ... ") + currentStatus.chargingTimeRemaining + String(" min left"), 120, yPos);
     yPos = yPos + 20;
   }
+
 }
 
 
@@ -369,7 +381,7 @@ CarData getFirstCar(String json) {
   return CarData(vin,name);
 }
 
-CarStatus parseCarData(String json) {
+CarStatus parseCarData(CarData car, String json) {
   Serial.print("JSON:");
   Serial.println(json);
   DynamicJsonBuffer jsonBuffer(4000);
@@ -379,13 +391,14 @@ CarStatus parseCarData(String json) {
   int km = _vehicleStatus["remainingRangeElectric"];
   String chrg = _vehicleStatus["chargingStatus"];
   bool isCharging = (chrg == "CHARGING");
+  int chargingTimeRemaining = _vehicleStatus["chargingTimeRemaining"];
   Serial.print("Battery :");
   Serial.println(lvl);
   Serial.print("Km left: ");
   Serial.println(km);
   Serial.print("Charging :");
   Serial.println(isCharging);
-  return CarStatus(lvl,km,isCharging);
+  return CarStatus(car.vin,car.name,lvl,km,isCharging,chargingTimeRemaining);
 }
 
 void loop() {
